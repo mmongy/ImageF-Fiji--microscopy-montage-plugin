@@ -150,7 +150,7 @@ class ViewedImageSelector: #Détermine image, série, Z sélectionnés.
         if self.selectedOperation == "Make Montage":
             fusedChannelsImage = makeFusedChannelsRedGreenBlueImage(zProjectedTunedImages)
         if self.selectedOperation == "Make Composite":
-            fusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages, self.valeurSelectionBooleanCLIJ, self.clij2_instance)
+            fusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages)
 
         print("Making initial dictionary of viewable images")
         dictionaryOfCurrentImages = makeDictionaryOfViewableImages(zProjectedTunedImages, fusedChannelsImage)
@@ -173,7 +173,7 @@ class ViewedImageSelector: #Détermine image, série, Z sélectionnés.
         if self.selectedOperation == "Make Montage":
             fusedChannelsImage = makeFusedChannelsRedGreenBlueImage(zProjectedTunedImages)
         if self.selectedOperation == "Make Composite":
-            fusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages, self.valeurSelectionBooleanCLIJ, self.clij2_instance)
+            fusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages)
 
         for channelImage in zProjectedTunedImages:
             channelImageTitle = channelImage.getTitle()
@@ -742,7 +742,7 @@ class MontageTuner(ResultTuner): #Gère les paramètres spécifiques pour les mo
 
     def makeMontageImagePlus(self):
         zDepthPreMontageImagesArray = makeArrayOfPreMontageImages(self.listOfAssignedImages, self.selectedImage["ResultImagesDictionary"])
-        montageImp = stackMontages(zDepthPreMontageImagesArray, self.numberOfColumns, self.numberOfRows, self.valeurSelectionBooleanCLIJ, self.clij2_instance)
+        montageImp = stackMontages(zDepthPreMontageImagesArray, self.numberOfColumns, self.numberOfRows, False, self.clij2_instance) #self.valeurSelectionBooleanCLIJ
         return montageImp
 
     def getMontageImagePlus(self):
@@ -916,7 +916,7 @@ class CompositeTuner(ResultTuner): #Gère les paramètres spécifiques des image
         resizedImagePlus = self.selectedImage["ImagePlus"].resize(int(redimensionCoef*self.selectedImage["ImagePlus"].getWidth()), int(redimensionCoef*self.selectedImage["ImagePlus"].getHeight()), "bilinear") # "bilinear" or "none"
 
         zProjectedTunedImages = makeTunedChannelImages(resizedImagePlus, self.selectedImage["GlobalSettings"]["ChannelTunersArray"])
-        compositeFusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages, self.valeurSelectionBooleanCLIJ, self.clij2_instance)
+        compositeFusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages)
         imagePlusComposite = CompositeImage(compositeFusedChannelsImage, typeValue)
 
         return imagePlusComposite
@@ -1209,6 +1209,13 @@ class InterfaceInstance: #Gère le système d'interface graphique.
             selectedResultTuner = self.imageSelector.getCurrentlySelectedImageSerie()["ResultTuner"]
             valeurSelectionBooleanCLIJ = self.imageSelector.getCLIJboolean()
             clij2_instance = self.imageSelector.getCLIJinstance()
+
+            redimensionCoef = selectedResultTuner.getResizeFactor()
+            xUnit = selectedResultTuner.get_X_unit()
+            xPixelSize = selectedResultTuner.getXPixelSize()
+            yUnit = selectedResultTuner.get_Y_unit()
+            yPixelSize = selectedResultTuner.getYPixelSize()
+
             dictionaryOfRealImages = {}
             for imageFile in imageFilesList:
                 dictionaryOfRealImages[str(imageFile)] = self.imageSelector.openImageFile(imageFile)
@@ -1225,13 +1232,28 @@ class InterfaceInstance: #Gère le système d'interface graphique.
                     print(imagePlusFilePath)
                     currentImagePlus = dictionaryOfRealImages[imageFile]["Serie "+str(serieNumber)]["ImagePlus"]
                     print("Processing "+currentImagePlus.getTitle())
+
+                    imageCalibration = currentImagePlus.getCalibration()
+                    resizedImagePlus = currentImagePlus.resize(int(redimensionCoef*currentImagePlus.getWidth()), int(redimensionCoef*currentImagePlus.getHeight()), "bilinear") # "bilinear" or "none"
+                    resizedImageCalibration = Calibration()
+                    resizedImageCalibration.setXUnit(String(xUnit))
+                    resizedImageCalibration.setXUnit(String(yUnit))
+                    resizedImageCalibration.pixelHeight = yPixelSize/redimensionCoef
+                    resizedImageCalibration.pixelWidth = xPixelSize/redimensionCoef
+                    resizedImagePlus.setCalibration(resizedImageCalibration)
+
                     #selectedZProjectMethodName = dictionaryOfRealImages[imageFile]["Serie "+str(serieNumber)]["GlobalSettings"]["selectedZProjectMethodName"]
 
                     if selectedZProjectMethodName != "---No_Z-Project---":
-                        zProjectedImagePlus = makeZProject(currentImagePlus, selectedZProjectMethodName, valeurSelectionBooleanCLIJ, clij2_instance)
-                        #zProjectedImagePlus = makeImageJZProject(imagePlus, selectedZProjectMethodName)
+                        if valeurSelectionBooleanCLIJ == False:
+                            zProjectedImagePlus = makeZProject(resizedImagePlus, selectedZProjectMethodName)
+                            #zProjectedImagePlus = makeImageJZProject(imagePlus, selectedZProjectMethodName)
+                        if valeurSelectionBooleanCLIJ == True:
+                            currentImageBuffer = clij2_instance.push(resizedImagePlus)
+                            zProjectedImageBuffer = makeZProject_CLIJ2(currentImageBuffer, selectedZProjectMethodName, clij2_instance)#makeZProject(currentImageBuffer, selectedZProjectMethodName)
+                            zProjectedImagePlus = clij2_instance.pull(zProjectedImageBuffer)
                     if selectedZProjectMethodName == "---No_Z-Project---":
-                        zProjectedImagePlus = currentImagePlus
+                        zProjectedImagePlus = resizedImagePlus
 
                     if selectedOperation == "Make Composite":
                         resultImagePlus = makeCompositePipeline(zProjectedImagePlus, selectedChannelTuners, selectedResultTuner)
@@ -1239,11 +1261,13 @@ class InterfaceInstance: #Gère le système d'interface graphique.
                         fileName = (imagePlusFilePath.split(separator)[-1]).split(".")[0]
                         dumpFileName = "Composite_"+str(selectedZProjectMethodName)+"_"+str(fileName)+"_"+str(impNumber)+"_"+str(serieNumber)
                     if selectedOperation == "Make Montage":
+
                         resultImagePlus = makeMontagePipeline(zProjectedImagePlus, selectedChannelTuners, selectedResultTuner)
                         #resultImagePlus.show()
                         fileName = (imagePlusFilePath.split(separator)[-1]).split(".")[0]
                         dumpFileName = "RGB_"+str(selectedZProjectMethodName)+"_"+str(fileName)+"_"+str(impNumber)+"_"+str(serieNumber)
                     print(dumpFileName)
+                    resultImagePlus.setCalibration(resizedImageCalibration)
                     saveFileImage(resultImagePlus, imagePlusFilePath, dumpSaveFilePath, dumpFileName, separator)
                     print("Done "+currentImagePlus.getTitle())
             print("End")
@@ -1501,16 +1525,18 @@ class InterfaceInstance: #Gère le système d'interface graphique.
 #---------------------------Fonctions de traitement d'image-----------------------------#
 #---------------------------------------------------------------------------------------#
 
+def returnBufferedCalculatedMatrixFromImagePlus(imagePlus): #unused
+    #zDepthForChannel = imagePlus.getNSlices() #Profondeur Z
+    imageWidth = imagePlus.getWidth(); #Largeur de l'image
+    imageHeight = imagePlus.getHeight(); #Hauteur de l'image
+    imageBuffer = clij2_instance.push(imagePlus)
+    newBufferedImageMatrix = clij2_instance.create(Long(imageHeight, imageWidth, 1)) #, NativeTypeEnum.Float
+    pass
+
+
 #----------------Z-PROJECTION FUNCTIONS----------------
 
-def makeZProjectOnSingleChannel(channelImagePlus, methodName, valeurSelectionBooleanCLIJ, clij2_instance):
-    if valeurSelectionBooleanCLIJ == False:
-        zProjectedChannelImagePlus = makeZProjectOnSingleChannel_no_GPU(channelImagePlus, methodName)
-    if valeurSelectionBooleanCLIJ == True:
-        zProjectedChannelImagePlus = makeZProjectOnSingleChannel_CLIJ2(channelImagePlus, methodName, clij2_instance)
-    return zProjectedChannelImagePlus
-
-def makeZProjectOnSingleChannel_no_GPU(channelImage, methodName): ####---MY Z-PROJECT ALGORITHM IS HERE---######
+def makeZProjectOnSingleChannel(channelImage, methodName): ####---MY Z-PROJECT ALGORITHM IS HERE---######
     """
     Mon algorithme perso pour faire un montage à partir d'une pile d'images en niveaux de gris (un canal).
     """
@@ -1574,7 +1600,51 @@ def makeZProjectOnSingleChannel_no_GPU(channelImage, methodName): ####---MY Z-PR
         newZProjectChannelImageProcessor.set(indice, globalPixelValue)
     return newZProjectChannelImage
 
-def makeZProjectOnSingleChannel_CLIJ2(channelImagePlus, methodName, clij2_instance):
+def makeZProject(imagePlus, methodName): #Cette fonction fait le Z-Project sur les 3 canaux. Utilise l'algo précédent.
+    """
+    Cette fonction fait le Z-Project sur les 3 canaux. Utilise l'algo précédent. Cette fonction devrait être interchangeable avec la fonction test:
+        "makeImageJZProject(imagePlus, methodName)"
+    """
+    zProjectedImageStack = ImageStack()
+    numberOfChannels = imagePlus.getNChannels() #Nombre de canaux
+    numberOfTimeFrames = imagePlus.getNFrames() #Nombre de "time-points". Penser à les gérer.
+    stackedImages = imagePlus.getStack()
+    totalNumberOfImages = stackedImages.getSize() #Profondeur Z * Nombre de canaux * numberOfTimeFrames
+
+    arrayOfChannels = separateByChannels(imagePlus)
+    channelNumber = 0
+    for channelImagePlus in arrayOfChannels:
+        zProjectedChannelImagePlus = makeZProjectOnSingleChannel(channelImagePlus, methodName)
+        zProjectedChannelImageProcessor = zProjectedChannelImagePlus.getProcessor()
+        zProjectedChannelTitle = String("Channel "+str(channelNumber+1)+", Z-Project "+str(methodName))
+        zProjectedImageStack.addSlice(zProjectedChannelTitle, zProjectedChannelImageProcessor)
+        channelNumber += 1
+
+    zProjectedImageTitle = String("Z-Project "+str(methodName))
+    #zProjectedImagePlus = ImagePlus(zProjectedImageTitle, zProjectedImageStack)
+    zProjectedImagePlus = ImagePlus()
+    zProjectedImagePlus.setTitle(zProjectedImageTitle)
+    zProjectedImagePlus.setStack(zProjectedImageStack, numberOfChannels, 1, numberOfTimeFrames) #1 seule slice car c'est une projection
+    #zProjectedImagePlus.show()
+    return zProjectedImagePlus
+
+def makeImageJZProject(imagePlus, methodName): #Fonction de test utilisant l'API ZProjector d'ImageJ/Fiji.
+    """
+    J'a bricolé ici une fonction utilisant l'API ZProjector d'ImageJ/Fiji. Juste pour tester, je ne m'en sers pas en temps normal.
+
+    Voir:
+    https://github.com/imagej/ImageJA/blob/master/src/main/java/ij/plugin/ZProjector.java
+    https://imagej.nih.gov/ij/developer/api/ij/plugin/ZProjector.html
+    https://imagej.net/Z-functions
+
+    Il existe dans le ZProjector une fonction alternative prenant un Z de départ et un Z de fin.
+    """
+
+    zProjectedImageStack = ZProjector.run(imagePlus, methodName) #Retourne un stack de canaux. Chaque canal correspond à la projection sur Z. Ne donne qu'une superposition des canaux pour une image d'une seule profondeur.
+    zProjectedImagePlus = ImagePlus("Z-Project "+str(methodName), zProjectedImageStack)
+    return zProjectedImagePlus
+
+def makeZProjectOnSingleChannel_CLIJ2(channelImagePlus, methodName, clij2_instance): #unused
     """
     #https://clij.github.io/clij2-docs/api_intro
 
@@ -1619,49 +1689,21 @@ def makeZProjectOnSingleChannel_CLIJ2(channelImagePlus, methodName, clij2_instan
 
     return newZProjectChannelImagePlus
 
-def makeZProject(imagePlus, methodName, valeurSelectionBooleanCLIJ, clij2_instance): #Cette fonction fait le Z-Project sur les 3 canaux. Utilise l'algo précédent.
-    """
-    Cette fonction fait le Z-Project sur les 3 canaux. Utilise l'algo précédent. Cette fonction devrait être interchangeable avec la fonction test:
-        "makeImageJZProject(imagePlus, methodName)"
-    """
-    zProjectedImageStack = ImageStack()
-    numberOfChannels = imagePlus.getNChannels() #Nombre de canaux
-    numberOfTimeFrames = imagePlus.getNFrames() #Nombre de "time-points". Penser à les gérer.
-    stackedImages = imagePlus.getStack()
-    totalNumberOfImages = stackedImages.getSize() #Profondeur Z * Nombre de canaux * numberOfTimeFrames
+def makeZProject_CLIJ2(imageBuffer, methodName, clij2_instance):
+    if methodName == "max":
+        clij2_instance.maximumZProjection(channelImageBuffer, resultImageBuffer) #differnce with argMaximumZProjection?
+    if methodName == "min":
+        clij2_instance.minimumZProjection(channelImageBuffer, resultImageBuffer)
+    if methodName == "sum":
+        clij2_instance.sumZProjection(channelImageBuffer, resultImageBuffer)
+    if methodName == "average":
+        clij2_instance.meanZProjection(channelImageBuffer, resultImageBuffer)
+    if methodName == "median":
+        clij2_instance.medianZProjection(channelImageBuffer, resultImageBuffer)
+    if methodName == "sd":
+        clij2_instance.standardDeviationZProjection(channelImageBuffer, resultImageBuffer)
+    return resultImageBuffer
 
-    arrayOfChannels = separateByChannels(imagePlus)
-    channelNumber = 0
-    for channelImagePlus in arrayOfChannels:
-        zProjectedChannelImagePlus = makeZProjectOnSingleChannel(channelImagePlus, methodName, valeurSelectionBooleanCLIJ, clij2_instance)
-        zProjectedChannelImageProcessor = zProjectedChannelImagePlus.getProcessor()
-        zProjectedChannelTitle = String("Channel "+str(channelNumber+1)+", Z-Project "+str(methodName))
-        zProjectedImageStack.addSlice(zProjectedChannelTitle, zProjectedChannelImageProcessor)
-        channelNumber += 1
-
-    zProjectedImageTitle = String("Z-Project "+str(methodName))
-    #zProjectedImagePlus = ImagePlus(zProjectedImageTitle, zProjectedImageStack)
-    zProjectedImagePlus = ImagePlus()
-    zProjectedImagePlus.setTitle(zProjectedImageTitle)
-    zProjectedImagePlus.setStack(zProjectedImageStack, numberOfChannels, 1, numberOfTimeFrames) #1 seule slice car c'est une projection
-    #zProjectedImagePlus.show()
-    return zProjectedImagePlus
-
-def makeImageJZProject(imagePlus, methodName): #Fonction de test utilisant l'API ZProjector d'ImageJ/Fiji.
-    """
-    J'a bricolé ici une fonction utilisant l'API ZProjector d'ImageJ/Fiji. Juste pour tester, je ne m'en sers pas en temps normal.
-
-    Voir:
-    https://github.com/imagej/ImageJA/blob/master/src/main/java/ij/plugin/ZProjector.java
-    https://imagej.nih.gov/ij/developer/api/ij/plugin/ZProjector.html
-    https://imagej.net/Z-functions
-
-    Il existe dans le ZProjector une fonction alternative prenant un Z de départ et un Z de fin.
-    """
-
-    zProjectedImageStack = ZProjector.run(imagePlus, methodName) #Retourne un stack de canaux. Chaque canal correspond à la projection sur Z. Ne donne qu'une superposition des canaux pour une image d'une seule profondeur.
-    zProjectedImagePlus = ImagePlus("Z-Project "+str(methodName), zProjectedImageStack)
-    return zProjectedImagePlus
 
 #----------------IMAGE CALCULUS FUNCTIONS----------------
 
@@ -1701,6 +1743,27 @@ def calculateRealPixelValue(originalChannelImageProcessor, maxPossibleTargetImag
         integerCorrectedLevelValue = maxPossibleTargetImagePixelValue
     return integerCorrectedLevelValue
 
+def calculateTargetImage_CLIJ2(originalChannelImagePlus, minOriginalImageShownPixelValue, maxOriginalImageShownPixelValue, maxPossibleTargetImagePixelValue, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, clij2_instance):
+    #Homologue de calculateRealPixelValue mais pour l'image entière et sur GPU.
+    #Explication pour les float: https://stackoverflow.com/questions/10768724/why-does-python-return-0-for-simple-division-calculation
+    A_pixel_equation_coefficient = float(maxPossibleTargetImagePixelValue)/(float(maxOriginalImageShownPixelValue)-float(minOriginalImageShownPixelValue))
+    B_pixel_equation_factor = -1.0*(float(maxPossibleTargetImagePixelValue)*float(minOriginalImageShownPixelValue))/(float(maxOriginalImageShownPixelValue)-float(minOriginalImageShownPixelValue))
+    print("A_pixel_equation_coefficient: "+str(A_pixel_equation_coefficient)+" B_pixel_equation_factor: "+str(B_pixel_equation_factor))
+    originalChannelImageBuffer = clij2_instance.push(originalChannelImagePlus)
+    tempBuffer1 = clij2_instance.create(originalChannelImageBuffer)
+    tempBuffer2 = clij2_instance.create(originalChannelImageBuffer)
+    tempBuffer3 = clij2_instance.create(originalChannelImageBuffer)
+    targetChannelImageBuffer = clij2_instance.create(originalChannelImageBuffer)
+    clij2_instance.multiplyImageAndScalar(originalChannelImageBuffer, tempBuffer1, A_pixel_equation_coefficient)
+    clij2_instance.addImageAndScalar(tempBuffer1, tempBuffer2, B_pixel_equation_factor)
+
+    #Gamma correction
+    clij2_instance.power(tempBuffer2, tempBuffer3, 1/gammaCorrection_gamma_power_factor)
+    clij2_instance.multiplyImageAndScalar(tempBuffer3, targetChannelImageBuffer, 1/gammaCorrection_A_linear_factor)
+
+    targetChannelImagePlus = clij2_instance.pull(targetChannelImageBuffer)
+    return targetChannelImagePlus
+
 def calculateCorrectedMinMaxPixelValues(originalChannelImageProcessor, minvalue, maxvalue):
     originalImageBitDepth = originalChannelImageProcessor.getBitDepth()
     maxPossibleValue = int((2**originalImageBitDepth)-1)
@@ -1712,95 +1775,6 @@ def calculateCorrectedMinMaxPixelValues(originalChannelImageProcessor, minvalue,
     correctedMaxPixelValue = int(minShownPixelValue + maxvalue*(maxShownPixelValue-minShownPixelValue)/maxPossibleValue)
 
     return correctedMinPixelValue, correctedMaxPixelValue
-
-def calculateRealPixelValue_CLIJ2(originalChannelImageProcessor, maxPossibleTargetImagePixelValue, integerRawLevelValue, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, clij2_instance):
-    pass
-
-#----------------GENERAL IMAGE PROCESSING FUNCTIONS----------------
-
-def separateByChannels(mainImageStackImp):
-    mainProcessor = mainImageStackImp.getProcessor()
-    numberOfChannels = mainImageStackImp.getNChannels() #Nombre de canaux
-    print("numberOfChannels: "+str(numberOfChannels))
-    zDepthByChannel = mainImageStackImp.getNSlices() #Profondeur Z
-    print("zDepthByChannel: "+str(zDepthByChannel))
-    imageWidth = mainImageStackImp.getWidth(); #Largeur de l'image
-    imageHeight = mainImageStackImp.getHeight(); #Hauteur de l'image
-    bitDepth = mainImageStackImp.getBitDepth() #Type de l'image en bits - Returns the bit depth, 8, 16, 24 (RGB) or 32, or 0 if the bit depth is unknown. RGB images actually use 32 bits per pixel.
-    stackedImages = mainImageStackImp.getStack()
-    #totalNumberOfImages = mainImageStackImp.getStackSize() #Profondeur Z * Nombre de canaux
-    totalNumberOfImages = stackedImages.getSize() #Profondeur Z * Nombre de canaux
-    print("totalNumberOfImages: "+str(totalNumberOfImages))
-    print("Separating by channels...")
-    arrayOfChannels = []
-    for channelNumber in range(0,numberOfChannels):
-        channelStack = ImageStack(imageWidth, imageHeight)
-        zDepthNumber = 1
-        for imageNumber in range(channelNumber, totalNumberOfImages, numberOfChannels):
-            sliceTitle = stackedImages.getSliceLabel(imageNumber+1)
-            sliceProcessor = stackedImages.getProcessor(imageNumber+1)
-            channelStack.addSlice(sliceTitle, sliceProcessor)
-            zDepthNumber+=1
-        channelTitle = String("Channel "+str(channelNumber+1))
-        channelImagePlus = ImagePlus(channelTitle, channelStack)
-        arrayOfChannels.append(channelImagePlus)
-    print("Finished separating by channels")
-    return arrayOfChannels
-
-def makeChannelTuningPipeline(channelImagePlus, channelNumber, selectedPseudoColor, selectedLUT, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedZProjectMethodName, selectedOperation):
-    zDepthForChannel = channelImagePlus.getNSlices() #Profondeur Z
-    imageWidth = channelImagePlus.getWidth(); #Largeur de l'image
-    imageHeight = channelImagePlus.getHeight(); #Hauteur de l'image
-    bitDepth = channelImagePlus.getBitDepth() #Type de l'image en bits - Returns the bit depth, 8, 16, 24 (RGB) or 32, or 0 if the bit depth is unknown. RGB images actually use 32 bits per pixel.
-
-    channelImageProcessor = channelImagePlus.getProcessor()
-    #correctedMinPixelValue, correctedMaxPixelValue = calculateCorrectedMinMaxPixelValues(channelImageProcessor, valeurPixelMinHistogram, valeurPixelMaxHistogram)
-    correctedMinPixelValue = valeurPixelMinHistogram
-    correctedMaxPixelValue = valeurPixelMaxHistogram
-    channelImageProcessor.setMinAndMax(correctedMinPixelValue, correctedMaxPixelValue) #Ne pas confondre setHistogramRange() avec setMinAndMax() (voir doc)
-
-    channelStackedImages = channelImagePlus.getStack()
-    newPseudoColoredChannelStack = ImageStack(imageWidth, imageHeight)
-    """
-    if selectedLUT == "---No_custom_LUT---":
-        newPseudoColoredChannelImageTitle = "LUTted "+str(selectedPseudoColor)+", Channel "+str(channelNumber)
-    if selectedLUT != "---No_custom_LUT---":
-        newPseudoColoredChannelImageTitle = "LUTted "+str(selectedLUT)+", Channel "+str(channelNumber)
-    """
-    newPseudoColoredChannelImageTitle = "Channel "+str(channelNumber)
-    for zNumber in range(0, zDepthForChannel):
-        zImageProcessor = channelStackedImages.getProcessor(zNumber+1)
-        if selectedOperation == "Make Montage":
-            newPseudoColoredChannelZImagePlus = IJ.createImage(str(newPseudoColoredChannelImageTitle)+", Z-Depth "+str(zNumber+1), "RGB Black", imageWidth, imageHeight, 1)
-            newPseudoColoredChannelZImageProcessor = processorsTuningPipelineForRedGreenBlueChannelImages(zImageProcessor, newPseudoColoredChannelZImagePlus, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedPseudoColor, selectedLUT, channelNumber, zNumber, selectedZProjectMethodName)
-        if selectedOperation == "Make Composite":
-            newPseudoColoredChannelZImagePlus = IJ.createImage(str(newPseudoColoredChannelImageTitle)+", Z-Depth "+str(zNumber+1), imageWidth, imageHeight, 1, bitDepth)
-            newPseudoColoredChannelZImageProcessor = processorsTuningPipelineForGrayLevelChannelImages(zImageProcessor, newPseudoColoredChannelZImagePlus, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedPseudoColor, selectedLUT, channelNumber, zNumber, selectedZProjectMethodName)
-        newPseudoColoredChannelZImagePlus.setProcessor(newPseudoColoredChannelZImageProcessor)
-        newPseudoColoredChannelStack.addSlice(newPseudoColoredChannelZImageProcessor)
-    newPseudoColoredChannelImagePlus = ImagePlus(String(newPseudoColoredChannelImageTitle), newPseudoColoredChannelStack)
-    return newPseudoColoredChannelImagePlus
-
-def makeTunedChannelImages(imagePlus, channelTuners):
-    zProjectChannels = separateByChannels(imagePlus)
-    zProjectedTunedImages = []
-    channelNumber = 0
-    for zProjectChannelImage in zProjectChannels:
-        channelTuner = channelTuners[channelNumber]
-        selectedPseudoColor = channelTuner.getSelectedPseudoColor()
-        selectedLUT = channelTuner.getSelectedCustomLUT()
-        valeurPixelMinHistogram = channelTuner.getSelectedMinPixelValue()
-        valeurPixelMaxHistogram = channelTuner.getSelectedMaxPixelValue()
-        selectedZProjectMethodName = channelTuner.getSelectedZProjectMethodName()
-        gammaCorrection_A_linear_factor = channelTuner.getGamma_A_LinearFactor()
-        gammaCorrection_gamma_power_factor = channelTuner.getGamma_gamma_PowerFactor()
-        selectedOperation = channelTuner.getSelectedOperation()
-        newPseudoColoredChannelImagePlus = makeChannelTuningPipeline(zProjectChannelImage, channelNumber, selectedPseudoColor, selectedLUT, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedZProjectMethodName, selectedOperation)
-        zProjectedTunedImages.append(newPseudoColoredChannelImagePlus)
-        channelNumber+=1
-    return zProjectedTunedImages
-
-#----------------RGB IMAGE PROCESSING FUNCTIONS----------------
 
 def makeBluePixel(integerGrayLevel, bitDepth):
     if integerGrayLevel > (2**bitDepth)-1: #Correction pour éviter les artefacts visuels liés au dépassement de la valeur max possible (revient à 0 sinon)
@@ -1855,6 +1829,127 @@ def makeRedGreenBluePixel(leveledBlueValue, leveledGreenValue, leveledRedValue):
     colouredPixelValue = pixelBlueValue + pixelGreenValue + pixelRedValue
     colouredPixelValue = int(colouredPixelValue)
     return colouredPixelValue
+
+
+#----------------GENERAL IMAGE PROCESSING FUNCTIONS----------------
+
+def separateByChannels(mainImageStackImp):
+    mainProcessor = mainImageStackImp.getProcessor()
+    numberOfChannels = mainImageStackImp.getNChannels() #Nombre de canaux
+    print("numberOfChannels: "+str(numberOfChannels))
+    zDepthByChannel = mainImageStackImp.getNSlices() #Profondeur Z
+    print("zDepthByChannel: "+str(zDepthByChannel))
+    imageWidth = mainImageStackImp.getWidth(); #Largeur de l'image
+    imageHeight = mainImageStackImp.getHeight(); #Hauteur de l'image
+    bitDepth = mainImageStackImp.getBitDepth() #Type de l'image en bits - Returns the bit depth, 8, 16, 24 (RGB) or 32, or 0 if the bit depth is unknown. RGB images actually use 32 bits per pixel.
+    stackedImages = mainImageStackImp.getStack()
+    #totalNumberOfImages = mainImageStackImp.getStackSize() #Profondeur Z * Nombre de canaux
+    totalNumberOfImages = stackedImages.getSize() #Profondeur Z * Nombre de canaux
+    print("totalNumberOfImages: "+str(totalNumberOfImages))
+    print("Separating by channels...")
+    arrayOfChannels = []
+    for channelNumber in range(0,numberOfChannels):
+        channelStack = ImageStack(imageWidth, imageHeight)
+        zDepthNumber = 1
+        for imageNumber in range(channelNumber, totalNumberOfImages, numberOfChannels):
+            sliceTitle = stackedImages.getSliceLabel(imageNumber+1)
+            sliceProcessor = stackedImages.getProcessor(imageNumber+1)
+            channelStack.addSlice(sliceTitle, sliceProcessor)
+            zDepthNumber+=1
+        channelTitle = String("Channel "+str(channelNumber+1))
+        channelImagePlus = ImagePlus(channelTitle, channelStack)
+        arrayOfChannels.append(channelImagePlus)
+    print("Finished separating by channels")
+    return arrayOfChannels
+
+def makeChannelTuningPipeline(channelImagePlus, channelNumber, selectedPseudoColor, selectedLUT, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedZProjectMethodName, selectedOperation):
+    zDepthForChannel = channelImagePlus.getNSlices() #Profondeur Z
+    imageWidth = channelImagePlus.getWidth(); #Largeur de l'image
+    imageHeight = channelImagePlus.getHeight(); #Hauteur de l'image
+    bitDepth = channelImagePlus.getBitDepth() #Type de l'image en bits - Returns the bit depth, 8, 16, 24 (RGB) or 32, or 0 if the bit depth is unknown. RGB images actually use 32 bits per pixel.
+    targetImageBitDepth = 8
+    maxPossibleTargetImagePixelValue = int((2**targetImageBitDepth)-1)
+
+    channelImageProcessor = channelImagePlus.getProcessor()
+    #correctedMinPixelValue, correctedMaxPixelValue = calculateCorrectedMinMaxPixelValues(channelImageProcessor, valeurPixelMinHistogram, valeurPixelMaxHistogram)
+    correctedMinPixelValue = valeurPixelMinHistogram
+    correctedMaxPixelValue = valeurPixelMaxHistogram
+    channelImageProcessor.setMinAndMax(correctedMinPixelValue, correctedMaxPixelValue) #Ne pas confondre setHistogramRange() avec setMinAndMax() (voir doc)
+
+    channelStackedImages = channelImagePlus.getStack()
+    newPseudoColoredChannelStack = ImageStack(imageWidth, imageHeight)
+    """
+    if selectedLUT == "---No_custom_LUT---":
+        newPseudoColoredChannelImageTitle = "LUTted "+str(selectedPseudoColor)+", Channel "+str(channelNumber)
+    if selectedLUT != "---No_custom_LUT---":
+        newPseudoColoredChannelImageTitle = "LUTted "+str(selectedLUT)+", Channel "+str(channelNumber)
+    """
+    newPseudoColoredChannelImageTitle = "Channel "+str(channelNumber)
+    for zNumber in range(0, zDepthForChannel):
+        zImageProcessor = channelStackedImages.getProcessor(zNumber+1)
+        if selectedOperation == "Make Montage":
+            newPseudoColoredChannelZImagePlus = IJ.createImage(str(newPseudoColoredChannelImageTitle)+", Z-Depth "+str(zNumber+1), "RGB Black", imageWidth, imageHeight, 1)
+            newPseudoColoredChannelZImageProcessor = processorsTuningPipelineForRedGreenBlueChannelImages(zImageProcessor, newPseudoColoredChannelZImagePlus, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedPseudoColor, selectedLUT, channelNumber, zNumber, selectedZProjectMethodName)
+        if selectedOperation == "Make Composite":
+            newPseudoColoredChannelZImagePlus = IJ.createImage(str(newPseudoColoredChannelImageTitle)+", Z-Depth "+str(zNumber+1), imageWidth, imageHeight, 1, bitDepth)
+            newPseudoColoredChannelZImageProcessor = processorsTuningPipelineForGrayLevelChannelImages(zImageProcessor, newPseudoColoredChannelZImagePlus, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedPseudoColor, selectedLUT, channelNumber, zNumber, selectedZProjectMethodName)
+        newPseudoColoredChannelZImagePlus.setProcessor(newPseudoColoredChannelZImageProcessor)
+        newPseudoColoredChannelStack.addSlice(newPseudoColoredChannelZImageProcessor)
+    newPseudoColoredChannelImagePlus = ImagePlus(String(newPseudoColoredChannelImageTitle), newPseudoColoredChannelStack)
+
+    return newPseudoColoredChannelImagePlus
+
+def makeChannelTuningPipeline_CLIJ2(channelImagePlus, channelNumber, selectedPseudoColor, selectedLUT, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedZProjectMethodName, selectedOperation, clij2_instance):
+    #équivalent de processorsTuningPipelineForGrayLevelChannelImages(
+    bitDepth = channelImagePlus.getBitDepth() #Type de l'image en bits - Returns the bit depth, 8, 16, 24 (RGB) or 32, or 0 if the bit depth is unknown. RGB images actually use 32 bits per pixel.
+    targetImageBitDepth = 8
+    maxPossibleTargetImagePixelValue = int((2**targetImageBitDepth)-1)
+
+    channelImageProcessor = channelImagePlus.getProcessor()
+    #correctedMinPixelValue, correctedMaxPixelValue = calculateCorrectedMinMaxPixelValues(channelImageProcessor, valeurPixelMinHistogram, valeurPixelMaxHistogram)
+    correctedMinPixelValue = valeurPixelMinHistogram
+    correctedMaxPixelValue = valeurPixelMaxHistogram
+    channelImageProcessor.setMinAndMax(correctedMinPixelValue, correctedMaxPixelValue) #Ne pas confondre setHistogramRange() avec setMinAndMax() (voir doc)
+
+    newPseudoColoredChannelImagePlus = calculateTargetImage_CLIJ2(channelImagePlus, valeurPixelMinHistogram, valeurPixelMaxHistogram, maxPossibleTargetImagePixelValue, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, clij2_instance)
+    newPseudoColoredChannelImageProcessor = newPseudoColoredChannelImagePlus.getProcessor()
+    if selectedLUT != "---No_custom_LUT---":
+        currentLUT = LutLoader.openLut(lutPath+selectedLUT)
+    if selectedLUT == "---No_custom_LUT---":
+        currentLUT = LUT.createLutFromColor(selectedPseudoColor)
+
+    newPseudoColoredChannelImageProcessor.setLut(currentLUT)
+
+    return newPseudoColoredChannelImagePlus
+
+def makeTunedChannelImages(imagePlus, channelTuners):
+    zProjectChannels = separateByChannels(imagePlus)
+    zProjectedTunedImages = []
+    channelNumber = 0
+    for zProjectChannelImage in zProjectChannels:
+        channelTuner = channelTuners[channelNumber]
+        selectedPseudoColor = channelTuner.getSelectedPseudoColor()
+        selectedLUT = channelTuner.getSelectedCustomLUT()
+        valeurPixelMinHistogram = channelTuner.getSelectedMinPixelValue()
+        valeurPixelMaxHistogram = channelTuner.getSelectedMaxPixelValue()
+        selectedZProjectMethodName = channelTuner.getSelectedZProjectMethodName()
+        gammaCorrection_A_linear_factor = channelTuner.getGamma_A_LinearFactor()
+        gammaCorrection_gamma_power_factor = channelTuner.getGamma_gamma_PowerFactor()
+        selectedOperation = channelTuner.getSelectedOperation()
+        valeurSelectionBooleanCLIJ = channelTuner.getCLIJboolean()
+        clij2_instance = channelTuner.getCLIJinstance()
+
+        if valeurSelectionBooleanCLIJ == False:
+            newPseudoColoredChannelImagePlus = makeChannelTuningPipeline(zProjectChannelImage, channelNumber, selectedPseudoColor, selectedLUT, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedZProjectMethodName, selectedOperation)
+        if valeurSelectionBooleanCLIJ == True:
+            newPseudoColoredChannelImagePlus = makeChannelTuningPipeline_CLIJ2(zProjectChannelImage, channelNumber, selectedPseudoColor, selectedLUT, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedZProjectMethodName, selectedOperation, clij2_instance)
+
+        zProjectedTunedImages.append(newPseudoColoredChannelImagePlus)
+        channelNumber+=1
+    return zProjectedTunedImages
+
+
+#----------------RGB IMAGE PROCESSING FUNCTIONS----------------
 
 def processorsTuningPipelineForRedGreenBlueChannelImages(channelImageProcessor, newPseudoColoredChannelImagePlus, valeurPixelMinHistogram, valeurPixelMaxHistogram, gammaCorrection_A_linear_factor, gammaCorrection_gamma_power_factor, selectedPseudoColor, selectedLUT, channelNumber, selectedZDepth, selectedZProjectMethodName):
     lutPath = IJ.getDirectory("luts")
@@ -1946,6 +2041,7 @@ def makeFusedChannelsRedGreenBlueImage(arrayOfImages):
     fusedImagesImagePlus = ImagePlus("Fused Image", fusedImagesStack)
     #fusedImagesImagePlus.show()
     return fusedImagesImagePlus
+
 
 #----------------RGB MONTAGE PROCESSING FUNCTIONS----------------
 
@@ -2080,7 +2176,30 @@ def makeMontage_no_GPU(stackImp, numberOfColumns, numberOfRows): #Mon algorithme
     newMontageImage.setProcessor(newMontageImageProcessor)
     return newMontageImage, montageWidth, montageHeight
 
-def makeMontage_CLIJ2(stackImp, numberOfColumns, numberOfRows, clij2_instance):
+def makeMontagePipeline(imagePlus, channelTuners, montageTuner):
+    """
+    Pipeline de montage proprement dit.
+    ImageJ/Fiji propose une API pour le faire (https://imagej.nih.gov/ij/developer/api/ij/plugin/MontageMaker.html) mais je l'ai découverte très tardivement.
+    J'ai préféré rester sur ma solution, qui me semble pas mal: au final, seul le redimensionnement des images (ci-dessus) influera sur la rapidité.
+    """
+    numberOfColumns = montageTuner.getNumberOfColumns()
+    numberOfRows = montageTuner.getNumberOfRows()
+    valeurSelectionBooleanCLIJ = montageTuner.getCLIJboolean()
+    clij2_instance = montageTuner.getCLIJinstance()
+
+    zProjectedTunedImages = makeTunedChannelImages(imagePlus, channelTuners)
+    if valeurSelectionBooleanCLIJ == False:
+        fusedChannelsImage = makeFusedChannelsRedGreenBlueImage(zProjectedTunedImages)
+    if valeurSelectionBooleanCLIJ == True:
+        fusedChannelsImage = makeFusedChannels_CLIJ2(zProjectedTunedImages)
+
+    dictionaryOfCurrentImages = makeDictionaryOfViewableImages(zProjectedTunedImages, fusedChannelsImage)
+    zDepthPreMontageImagesArray = makeArrayOfPreMontageImages(montageTuner.getListOfAssignedImages(), dictionaryOfCurrentImages)
+    montageImp = stackMontages(zDepthPreMontageImagesArray, numberOfColumns, numberOfRows, valeurSelectionBooleanCLIJ, clij2_instance)
+
+    return montageImp
+
+def makeMontage_CLIJ2(stackImp, numberOfColumns, numberOfRows, clij2_instance): #Partially dysfunctional because CLIJ2 doesn't work on 24bit (3x8bit) RGB images
     #https://clij.github.io/clij2-docs/md/crop_and_paste/
     bitDepth = stackImp.getBitDepth() #Type de l'image en bits - Returns the bit depth, 8, 16, 24 (RGB) or 32, or 0 if the bit depth is unknown. RGB images actually use 32 bits per pixel.
     imageWidth = stackImp.getWidth(); #Largeur de l'image
@@ -2128,49 +2247,24 @@ def makeMontage_CLIJ2(stackImp, numberOfColumns, numberOfRows, clij2_instance):
 
     return newMontageImagePlus, montageWidth, montageHeight
 
-def makeMontagePipeline(imagePlus, channelTuners, montageTuner):
+def makeFusedChannels_CLIJ2(listOfImages, clij2_instance):
     """
-    2 étapes:
-    - Gestion de la calibration et du redimensionnement de l'image résultante
-    - Pipeline de montage proprement dit.
+    Ajoute récursivement les images pour contourner la limite de 2 images des fonctions de CLIJ2.
+    Echoue à faire un composite, fait juste un merge. Peut-être pour montages en niveaux de gris...
     """
-    """
-    1: Gestion de la calibration et du redimensionnement de l'image résultante
-    """
-    redimensionCoef = montageTuner.getResizeFactor()
-    xUnit = montageTuner.get_X_unit()
-    xPixelSize = montageTuner.getXPixelSize()
-    yUnit = montageTuner.get_Y_unit()
-    yPixelSize = montageTuner.getYPixelSize()
-    imageCalibration = imagePlus.getCalibration()
+    if len(listOfImages) == 1:
+        leveledCompositeImage = listOfImages[0]
+        leveledCompositeImage.setTitle("Fused Image")
+        return leveledCompositeImage
+    if len(listOfImages) > 1:
+        image1 = clij2_instance.push(listOfImages.pop(0)) #listOfImages[0]
+        image2 = clij2_instance.push(listOfImages.pop(0)) #listOfImages[1]
+        sumOfImages = clij2_instance.create(image1)
+        clij2_instance.addImages(image1, image2, sumOfImages)
+        resultImagePlus = clij2_instance.pull(sumOfImages)
+        listOfImages.append(resultImagePlus)
+        return makeFusedChannels_CLIJ2(listOfImages, clij2_instance)
 
-    resizedImagePlus = imagePlus.resize(int(redimensionCoef*imagePlus.getWidth()), int(redimensionCoef*imagePlus.getHeight()), "bilinear") # "bilinear" or "none"
-
-    resizedImageCalibration = Calibration()
-    resizedImageCalibration.setXUnit(String(xUnit))
-    resizedImageCalibration.setXUnit(String(yUnit))
-    resizedImageCalibration.pixelHeight = yPixelSize/redimensionCoef
-    resizedImageCalibration.pixelWidth = xPixelSize/redimensionCoef
-    resizedImagePlus.setCalibration(resizedImageCalibration)
-
-    """
-    2: Pipeline de montage proprement dit.
-    ImageJ/Fiji propose une API pour le faire (https://imagej.nih.gov/ij/developer/api/ij/plugin/MontageMaker.html) mais je l'ai découverte très tardivement.
-    J'ai préféré rester sur ma solution, qui me semble pas mal: au final, seul le redimensionnement des images (ci-dessus) influera sur la rapidité.
-    """
-    numberOfColumns = montageTuner.getNumberOfColumns()
-    numberOfRows = montageTuner.getNumberOfRows()
-    valeurSelectionBooleanCLIJ = montageTuner.getCLIJboolean()
-    clij2_instance = montageTuner.getCLIJinstance()
-
-    zProjectedTunedImages = makeTunedChannelImages(resizedImagePlus, channelTuners)
-    fusedChannelsImage = makeFusedChannelsRedGreenBlueImage(zProjectedTunedImages)
-    dictionaryOfCurrentImages = makeDictionaryOfViewableImages(zProjectedTunedImages, fusedChannelsImage)
-    zDepthPreMontageImagesArray = makeArrayOfPreMontageImages(montageTuner.getListOfAssignedImages(), dictionaryOfCurrentImages)
-    montageImp = stackMontages(zDepthPreMontageImagesArray, numberOfColumns, numberOfRows, valeurSelectionBooleanCLIJ, clij2_instance)
-
-    montageImp.setCalibration(resizedImageCalibration)
-    return montageImp
 
 #----------------COMPOSITE IMAGE PROCESSING FUNCTIONS----------------
 
@@ -2199,31 +2293,10 @@ def processorsTuningPipelineForGrayLevelChannelImages(channelImageProcessor, new
     newPseudoColoredChannelImageProcessor.setLut(currentLUT)
     return newPseudoColoredChannelImageProcessor
 
-def makeFusedChannelsCompositeImage(arrayOfImages, valeurSelectionBooleanCLIJ, clij2_instance):
-    if valeurSelectionBooleanCLIJ == False:
-        leveledCompositeImage = makeFusedChannelsCompositeImage_no_GPU(arrayOfImages)
-    if valeurSelectionBooleanCLIJ == True:
-        leveledCompositeImage = makeFusedChannelsCompositeImage_CLIJ2(arrayOfImages, clij2_instance)
-    return leveledCompositeImage
-
-def makeFusedChannelsCompositeImage_no_GPU(arrayOfImages):
+def makeFusedChannelsCompositeImage(arrayOfImages):
     leveledCompositeImage = RGBStackMerge.mergeChannels(arrayOfImages, True) #True pour garder les images sources
     leveledCompositeImage.setTitle("Fused Image")
     return leveledCompositeImage
-
-def makeFusedChannelsCompositeImage_CLIJ2(listOfImages, clij2_instance): #test addAllImagesRecursively_CLIJ2
-    if len(listOfImages) == 1:
-        leveledCompositeImage = listOfImages[0]
-        leveledCompositeImage.setTitle("Fused Image")
-        return leveledCompositeImage
-    if len(listOfImages) > 1:
-        image1 = clij2_instance.push(listOfImages.pop(0)) #listOfImages[0]
-        image2 = clij2_instance.push(listOfImages.pop(0)) #listOfImages[1]
-        sumOfImages = clij2_instance.create(image1)
-        clij2_instance.addImages(image1, image2, sumOfImages)
-        resultImagePlus = clij2_instance.pull(sumOfImages)
-        listOfImages.append(resultImagePlus)
-        return makeFusedChannelsCompositeImage_CLIJ2(listOfImages, clij2_instance)
 
 def finalizeCompositeImagePlus(imagePlusComposite, compositeTuner):
     """
@@ -2247,41 +2320,17 @@ def finalizeCompositeImagePlus(imagePlusComposite, compositeTuner):
 
 def makeCompositePipeline(imagePlus, channelTuners, compositeTuner):
     """
-    2 étapes:
-    - Gestion de la calibration et du redimensionnement de l'image résultante
-    - Pipeline de transformation en Composite.
-    """
-    """
-    1: Gestion de la calibration et du redimensionnement de l'image résultante
-    """
-    redimensionCoef = compositeTuner.getResizeFactor()
-    xUnit = compositeTuner.get_X_unit()
-    xPixelSize = compositeTuner.getXPixelSize()
-    yUnit = compositeTuner.get_Y_unit()
-    yPixelSize = compositeTuner.getYPixelSize()
-    imageCalibration = imagePlus.getCalibration()
-
-    resizedImagePlus = imagePlus.resize(int(redimensionCoef*imagePlus.getWidth()), int(redimensionCoef*imagePlus.getHeight()), "bilinear") # "bilinear" or "none"
-
-    resizedImageCalibration = Calibration()
-    resizedImageCalibration.setXUnit(String(xUnit))
-    resizedImageCalibration.setXUnit(String(yUnit))
-    resizedImageCalibration.pixelHeight = yPixelSize/redimensionCoef
-    resizedImageCalibration.pixelWidth = xPixelSize/redimensionCoef
-    resizedImagePlus.setCalibration(resizedImageCalibration)
-
-    """
-    2: Pipeline de transformation en Composite.
+    Pipeline de transformation en Composite.
     """
     valeurSelectionBooleanCLIJ = compositeTuner.getCLIJboolean()
     clij2_instance = compositeTuner.getCLIJinstance()
 
-    zProjectedTunedImages = makeTunedChannelImages(resizedImagePlus, channelTuners)
-    compositeFusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages, valeurSelectionBooleanCLIJ, clij2_instance)
+    zProjectedTunedImages = makeTunedChannelImages(imagePlus, channelTuners)
+    compositeFusedChannelsImage = makeFusedChannelsCompositeImage(zProjectedTunedImages)
     imagePlusComposite = finalizeCompositeImagePlus(compositeFusedChannelsImage, compositeTuner)
-    imagePlusComposite.setCalibration(resizedImageCalibration)
 
     return imagePlusComposite
+
 
 #----------------SAVE FUNCTION----------------
 
@@ -2325,10 +2374,10 @@ def openMainDialogBox():
     choixOperation = ["Make Composite", "Make Montage"]
     selectionOperation = choixOperation[0]
     mainDialogBox.addChoice("Select Operation type you want to do",choixOperation,selectionOperation)
+    mainDialogBox.addMessage("------------------------------------------")
 
     #Add CLIJ2 support
     booleanCLIJ = False
-
     mainDialogBox.addCheckbox("Utiliser CLIJ2 pour augmenter la vitesse",booleanMetamorph)
     #mainDialogBox.addMessage("On entend par fichier metamorphique un fichier de meta donnees accompagne de plusieurs fichiers image")
     mainDialogBox.addMessage("------------------------------------------")
