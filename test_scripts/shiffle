@@ -1,0 +1,47 @@
+	/** Changes the dimension order of a 4D or 5D stack from 
+		the specified order (CTZ, ZCT, ZTC, TCZ or TZC) to 
+		the XYCZT order used by ImageJ. */
+	public void shuffle(ImagePlus imp, int order) {
+        int nChannels = imp.getNChannels();
+        int nSlices = imp.getNSlices();
+        int nFrames = imp.getNFrames();
+		int first=C, middle=Z, last=T;
+		int nFirst=nChannels, nMiddle=nSlices, nLast=nFrames;
+		switch (order) {
+			case CTZ: first=C; middle=T; last=Z;
+				nFirst=nChannels; nMiddle=nFrames; nLast=nSlices;
+				break;
+			case ZCT: first=Z; middle=C; last=T;
+				nFirst=nSlices; nMiddle=nChannels; nLast=nFrames;
+				break;
+			case ZTC: first=Z; middle=T; last=C;
+				nFirst=nSlices; nMiddle=nFrames; nLast=nChannels;
+				break;
+			case TCZ: first=T; middle=C; last=Z;
+				nFirst=nFrames; nMiddle=nChannels; nLast=nSlices;
+				break;
+			case TZC: first=T; middle=Z; last=C;
+				nFirst=nFrames; nMiddle=nSlices; nLast=nChannels;
+				break;
+		}
+		if (order!=CZT) {
+			ImageStack stack = imp.getImageStack();
+			Object[] images1 = stack.getImageArray();
+			Object[] images2 = new Object[images1.length];
+			System.arraycopy(images1, 0, images2, 0, images1.length);
+			String[] labels1 = stack.getSliceLabels();
+			String[] labels2 = new String[labels1.length];
+			System.arraycopy(labels1, 0, labels2, 0, labels1.length);
+			int[] index = new int[3];
+			for (index[2]=0; index[2]<nFrames; ++index[2]) {
+				for (index[1]=0; index[1]<nSlices; ++index[1]) {
+					for (index[0]=0; index[0]<nChannels; ++index[0]) {
+						int dstIndex = index[0] + index[1]*nChannels + index[2]*nChannels*nSlices;
+						int srcIndex = index[first] + index[middle]*nFirst + index[last]*nFirst*nMiddle;
+						images1[dstIndex] = images2[srcIndex];
+						labels1[dstIndex] = labels2[srcIndex];
+					}
+				}
+			}
+		}
+	}

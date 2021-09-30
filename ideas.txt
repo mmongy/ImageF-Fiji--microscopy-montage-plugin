@@ -1,0 +1,9 @@
+https://forum.image.sc/t/how-to-have-a-batch-of-images-with-the-same-brightness-and-contrast/3914/
+
+https://forum.image.sc/t/getting-histogram-data/3599
+https://www.codespeedy.com/plot-graph-in-java/
+https://kodejava.org/how-do-i-draw-plot-a-graph/ #Pour histogramme
+https://forum.image.sc/t/how-to-get-the-specific-value-from-the-histogram-plot/8583
+
+Compile to Java:
+https://albert.rierol.net/jython_imagej_examples.html
